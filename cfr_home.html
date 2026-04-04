@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ana Səhifə - CFR elan</title>
+    <link rel="stylesheet" href="cfr_stil.css">
+</head>
+<body>
+    <div class="container">
+        <h2>Xoş gəlmisiniz!</h2>
+        <div class="add-ad-box">
+            <h3>Elan əlavə et</h3>
+            <form id="adForm">
+                <label>Başlıq:</label>
+                <input type="text" id="title" placeholder="Elanın başlığı" required>
+                <label>Təsvir:</label>
+                <input type="text" id="description" placeholder="Qısa təsvir" required>
+                <label>Qiymət:</label>
+                <input type="number" id="price" placeholder="Qiymət" required>
+                <button type="submit">Elan əlavə et</button>
+            </form>
+        </div>
+        <div class="ads-box">
+            <h3>Elanlar</h3>
+            <div id="adsList">
+            </div>
+        </div>
+    </div>
+    <script src="ads.js"></script>
+</body>
+</html>
