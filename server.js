@@ -4,99 +4,193 @@ const { Pool } = require("pg");
 const bcrypt = require("bcrypt");
 
 const app = express();
+
+// Middleware-lər
 app.use(cors());
 app.use(express.json());
 
-// postgresql baglantisi
+// PostgreSQL bağlantısı
 const pool = new Pool({
-    user: "postgres",
-    host: "localhost",
-    database: "cfr_elan",
-    password: "12345",
-    port: 5432
+    user: process.env.DB_USER || "postgres",
+    host: process.env.DB_HOST || "localhost",
+    database: process.env.DB_NAME || "cfr_elan",
+    password: process.env.DB_PASSWORD || "12345",
+    port: process.env.DB_PORT || 5432
 });
 
-// test
+// Baza bağlantısında gözlənilməz xətanı tutmaq üçün
+pool.on("error", (err) => {
+    console.error("Gözlənilməz baza xətası:", err);
+});
+
+// Test marşrutu
 app.get("/", (req, res) => {
-    res.send("Server işləyir");
+    res.json({ status: "Server aktivdir və işləyir!" });
 });
 
-// sign up
+// ==========================================
+// 1. QEYDİYYAT (SIGN UP)
+// ==========================================
 app.post("/signup", async (req, res) => {
-    const { fullname, email, password } = req.body;
+    let { fullname, email, password } = req.body;
+
+    // Xanaların boş olub-olmaması yoxlanılır
+    if (!fullname || !email || !password) {
+        return res.status(400).json({ message: "Zəhmət olmasa, bütün xanaları doldurun!" });
+    }
+
+    fullname = fullname.trim();
+    email = email.trim().toLowerCase();
+
+    // Şifrənin minimum uzunluğu
+    if (password.length < 8) {
+        return res.status(400).json({ message: "Şifrə ən azı 8 simvoldan ibarət olmalıdır!" });
+    }
 
     try {
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // Email-in əvvəlcədən mövcud olub-olmadığını yoxlayırıq
+        const existingUser = await pool.query(
+            "SELECT id FROM users WHERE email = $1", 
+            [email]
+        );
 
-        await pool.query(
-            "INSERT INTO users (fullname, email, password) VALUES ($1, $2, $3)",
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({ message: "Bu email artıq qeydiyyatdan keçib!" });
+        }
+
+        // Şifrəni şifrələyirik (hashing)
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        // Yeni istifadəçini bazaya əlavə edirik
+        const newUser = await pool.query(
+            "INSERT INTO users (fullname, email, password) VALUES ($1, $2, $3) RETURNING id, fullname, email",
             [fullname, email, hashedPassword]
         );
 
-        res.json({ message: "Qeydiyyat uğurludur" });
+        res.status(201).json({ 
+            message: "Qeydiyyat uğurla tamamlandı!",
+            user: newUser.rows[0]
+        });
+
     } catch (err) {
-        console.log(err);
-        res.status(400).json({ message: "Email artıq mövcuddur və ya xəta baş verdi" });
+        console.error("Signup xətası:", err);
+        res.status(500).json({ message: "Serverdə xəta baş verdi, yenidən cəhd edin." });
     }
 });
 
-// login
+// ==========================================
+// 2. DAXİL OLMAQ (LOGIN)
+// ==========================================
 app.post("/login", async (req, res) => {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ message: "Email və şifrə daxil edilməlidir!" });
+    }
+
+    email = email.trim().toLowerCase();
 
     try {
+        // İstifadəçini axtarırıq
         const result = await pool.query(
             "SELECT * FROM users WHERE email = $1",
             [email]
         );
 
         if (result.rows.length === 0) {
-            return res.status(400).json({ message: "İstifadəçi tapılmadı" });
+            return res.status(404).json({ message: "Bu email ilə qeydiyyatlı istifadəçi tapılmadı!" });
         }
 
         const user = result.rows[0];
-        const isMatch = await bcrypt.compare(password, user.password);
 
+        // Şifrənin doğruluğunu yoxlayırıq
+        const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            return res.status(400).json({ message: "Şifrə yanlışdır" });
+            return res.status(401).json({ message: "Daxil edilən şifrə yanlışdır!" });
         }
 
-        res.json({ message: "Uğurla daxil oldunuz" });
+        // Frontend üçün istifadəçi məlumatları (şifrə xaric)
+        res.status(200).json({
+            message: "Uğurla daxil oldunuz!",
+            user: {
+                id: user.id,
+                fullname: user.fullname,
+                email: user.email
+            }
+        });
+
     } catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Server xətası" });
+        console.error("Login xətası:", err);
+        res.status(500).json({ message: "Daxil olarkən server xətası baş verdi." });
     }
 });
 
-// elan elave et
+// ==========================================
+// 3. YENİ ELAN ƏLAVƏ ETMƏK (POST AD)
+// ==========================================
 app.post("/ads", async (req, res) => {
     const { title, description, price, user_id } = req.body;
 
+    // Sahələrin yoxlanışı
+    if (!title || !price || !user_id) {
+        return res.status(400).json({ message: "Başlıq, qiymət və istifadəçi ID mütləqdir!" });
+    }
+
+    if (isNaN(price) || Number(price) <= 0) {
+        return res.status(400).json({ message: "Qiymət düzgün rəqəm olmalıdır!" });
+    }
+
     try {
-        await pool.query(
-            "INSERT INTO ads (title, description, price, user_id) VALUES ($1, $2, $3, $4)",
-            [title, description, price, user_id]
+        const newAd = await pool.query(
+            "INSERT INTO ads (title, description, price, user_id) VALUES ($1, $2, $3, $4) RETURNING *",
+            [title.trim(), description ? description.trim() : null, price, user_id]
         );
 
-        res.json({ message: "Elan əlavə edildi!" });
+        res.status(201).json({ 
+            message: "Elan uğurla əlavə edildi!",
+            ad: newAd.rows[0]
+        });
+
     } catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Xəta baş verdi" });
+        console.error("Elan əlavə xətası:", err);
+        res.status(500).json({ message: "Elan əlavə edilərkən xəta baş verdi." });
     }
 });
 
-// elanlari goster
+// ==========================================
+// 4. BÜTÜN ELANLARI GƏTİRMƏK (GET ADS)
+// ==========================================
 app.get("/ads", async (req, res) => {
     try {
-        const result = await pool.query("SELECT * FROM ads ORDER BY id DESC");
-        res.json(result.rows);
+        // JOIN vasitəsilə elanın sahibinin adını və emailini də birlikdə gətiririk
+        const query = `
+            SELECT 
+                ads.id,
+                ads.title,
+                ads.description,
+                ads.price,
+                ads.user_id,
+                users.fullname AS author_name,
+                users.email AS author_email
+            FROM ads
+            LEFT JOIN users ON ads.user_id = users.id
+            ORDER BY ads.id DESC
+        `;
+
+        const result = await pool.query(query);
+        res.status(200).json(result.rows);
+
     } catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Elanlar gətirilə bilmədi" });
+        console.error("Elanlar gətirilərkən xəta:", err);
+        res.status(500).json({ message: "Elanlar gətirilə bilmədi." });
     }
 });
 
-// SERVER START
-app.listen(3000, () => {
-    console.log("Server 3000 portunda işləyir");
+// ==========================================
+// SERVERİ BAŞLATMAQ
+// ==========================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Server http://localhost:${PORT} ünvanında işləyir`);
 });
